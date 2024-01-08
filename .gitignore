@@ -1,0 +1,9 @@
+# Get that pycache out of here
+__pycache__
+
+# No env files should be included
+**.env
+
+# Ignore common virtualenv directory names 
+env
+venv

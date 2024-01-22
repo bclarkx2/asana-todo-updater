@@ -6,6 +6,8 @@ import datetime
 import numpy
 from dataclasses import dataclass
 
+OPT_FIELDS = 'name,completed,due_on,start_on,custom_fields'
+
 def main():
     args = parse_args(sys.argv[1:])
 
@@ -13,13 +15,19 @@ def main():
     client.options['client_name'] = 'asana-todo-updater'
     client.headers['Asana-Disable'] = 'new_goal_memberships,new_user_task_lists'
 
+
     # Retrieve all incomplete tasks in the specific project
     try:
-        tasks = client.tasks.get_tasks({
-            'project': args.project_gid,
-            'completed_since': datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
-            'opt_fields': 'name,completed,due_on,start_on,custom_fields'
-        })
+        if args.task_gid is not None:
+            tasks = [client.tasks.get_task(gid, {
+                'opt_fields': OPT_FIELDS
+            }) for gid in args.task_gid]
+        else:
+            tasks = client.tasks.get_tasks({
+                'project': args.project_gid,
+                'completed_since': datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
+                'opt_fields': OPT_FIELDS
+            })
     except asana.error.AsanaError as e:
         print(f"Asana error getting tasks: {e}")
         return
@@ -191,6 +199,12 @@ def parse_args(argv=None):
         '--urgency-field-gid',
         default=os.environ.get('URGENCY_FIELD_GID', '1205994998304510'),
         help='gid of custom field holding urgency')
+
+    parser.add_argument(
+        '--task-gid',
+        action='append',
+        type=str,
+        help='gid for specific task to update')
 
     parser.add_argument(
         'project_gid',

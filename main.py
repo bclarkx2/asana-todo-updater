@@ -1,20 +1,74 @@
-import sys
-import os
+"""Update Asana tasks with urgency based on custom fields."""
+
 import argparse
 import asana
 import datetime
 import numpy
-from dataclasses import dataclass
+import os
+import sys
 
 OPT_FIELDS = 'name,completed,due_on,start_on,custom_fields'
 
+
 def main():
+    """Update Asana tasks with urgency based on custom fields."""
     args = parse_args(sys.argv[1:])
 
     client = asana.Client.access_token(args.personal_access_token)
     client.options['client_name'] = 'asana-todo-updater'
     client.headers['Asana-Disable'] = 'new_goal_memberships,new_user_task_lists'
 
+    # If we have a section to fix ordering on, do that first
+    if args.fix_section_ordering is not None:
+        # First, fetch all tasks from the section
+        try:
+            tasks = client.tasks.get_tasks_for_section(
+                args.fix_section_ordering,
+                {'opt_fields': OPT_FIELDS}
+            )
+        except asana.error.AsanaError as e:
+            print(f"Asana error getting sections: {e}")
+            return
+        except Exception as e:
+            print(f"Unknown error getting sections: {e}")
+            return
+
+        # Now, sort the tasks by the order field, with unordered tasks at the
+        # end
+        toSort = []
+        for task in tasks:
+            # First parse out all the fields we'll need
+            fields = {}
+            for field in task['custom_fields']:
+                fields[field['gid']] = field
+
+            toSort.append({
+                'name': task['name'],
+                'gid': task['gid'],
+                'order': parse_number_field(fields, args.order_field_gid)
+            })
+        didSort = sorted(toSort, key=lambda x: (x['order'] is None, x['order']))
+
+        # Finally, re-order the tasks one by one.
+        order = 0
+        for task in didSort:
+            order += 10
+            try:
+                if task['order'] is not None:
+                    print(f"Setting order: {order} => {task['name']}")
+                    client.tasks.update_task(task['gid'], {
+                        'custom_fields': {
+                            args.order_field_gid: order
+                        }
+                    })
+                else:
+                    print(f"Not ordering: {task['name']}")
+            except asana.error.AsanaError as e:
+                print(f"{task['name']} => Asana error ordering task: {e}")
+                return
+            except Exception as e:
+                print(f"{task['name']} => Unknown error ordering task: {e}")
+                return
 
     # Retrieve all incomplete tasks in the specific project
     try:
@@ -64,9 +118,9 @@ def main():
         # Update only the urgency field on the source task
         try:
             client.tasks.update_task(task['gid'], {
-                    'custom_fields': {
-                        args.urgency_field_gid: urgency
-                    }
+                'custom_fields': {
+                    args.urgency_field_gid: urgency
+                }
             })
         except asana.error.AsanaError as e:
             print(f"{name} => Asana error updating task: {e}")
@@ -75,7 +129,9 @@ def main():
 
         print(f"{name} => {urgency}")
 
+
 def parse_enum_custom_field(fields, field_gid):
+    """Parse an enum custom field from the fields dictionary."""
     try:
         return fields[field_gid]['enum_value']['name']
     except TypeError:
@@ -83,7 +139,9 @@ def parse_enum_custom_field(fields, field_gid):
     except KeyError:
         return None
 
+
 def parse_date_custom_field(fields, field_gid):
+    """Parse a date custom field from the fields dictionary."""
     datestr = ''
     try:
         datestr = fields[field_gid]['date_value']['date']
@@ -94,7 +152,9 @@ def parse_date_custom_field(fields, field_gid):
 
     return parse_date(datestr)
 
+
 def parse_bool_field(fields, field_name):
+    """Parse a boolean field from the fields dictionary."""
     fieldval = None
     try:
         fieldval = fields[field_name]
@@ -106,7 +166,17 @@ def parse_bool_field(fields, field_name):
     except ValueError:
         return False
 
+
+def parse_number_field(fields, field_gid):
+    """Parse a number field from the fields dictionary."""
+    try:
+        return fields[field_gid]['number_value']
+    except KeyError:
+        return None
+
+
 def parse_date_field(fields, field_name):
+    """Parse a date field from the fields dictionary."""
     datestr = ''
     try:
         datestr = fields[field_name]
@@ -115,7 +185,9 @@ def parse_date_field(fields, field_name):
 
     return parse_date(datestr)
 
+
 def parse_date(datestr):
+    """Parse a date string into a date object."""
     if datestr is None:
         return None
 
@@ -124,8 +196,9 @@ def parse_date(datestr):
     except ValueError:
         return None
 
-def compute_urgency(due_on, open_date, impact):
 
+def compute_urgency(due_on, open_date, impact):
+    """Compute urgency value based on due date, open date, and impact."""
     urgency = 0
 
     match impact:
@@ -170,7 +243,9 @@ def compute_urgency(due_on, open_date, impact):
 
     return urgency
 
+
 def parse_args(argv=None):
+    """Parse CLI arguments."""
     parser = argparse.ArgumentParser(
         description='Find unexpected connect page data',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -201,6 +276,16 @@ def parse_args(argv=None):
         help='gid of custom field holding urgency')
 
     parser.add_argument(
+        '--order-field-gid',
+        default=os.environ.get('ORDER_FIELD_GID', '1206071193914820'),
+        help='gid of custom field holding order')
+
+    parser.add_argument(
+        '--fix-section-ordering',
+        default=os.environ.get('FIX_SECTION_ORDERING', '1206005792093857'),
+        help='re-order tasks in section of project')
+
+    parser.add_argument(
         '--task-gid',
         action='append',
         type=str,
@@ -212,6 +297,6 @@ def parse_args(argv=None):
 
     return parser.parse_args(argv)
 
+
 if __name__ == "__main__":
     main()
-

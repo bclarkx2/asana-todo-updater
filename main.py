@@ -18,12 +18,17 @@ def main():
     client.options['client_name'] = 'asana-todo-updater'
     client.headers['Asana-Disable'] = 'new_goal_memberships,new_user_task_lists'
 
+    args.func(args, client)
+
+
+def order(args, client):
+    """Order tasks in a section of a project."""
     # If we have a section to fix ordering on, do that first
-    if args.fix_section_ordering is not None:
+    if args.section_gid is not None:
         # First, fetch all tasks from the section
         try:
             tasks = client.tasks.get_tasks_for_section(
-                args.fix_section_ordering,
+                args.section_gid,
                 {'opt_fields': OPT_FIELDS}
             )
         except asana.error.AsanaError as e:
@@ -69,26 +74,46 @@ def main():
             except Exception as e:
                 print(f"{task['name']} => Unknown error ordering task: {e}")
                 return
+        return
 
+
+def urgency(args, client):
+    """Update urgency of tasks in a project."""
     # Retrieve all incomplete tasks in the specific project
     try:
-        if args.task_gid is not None:
-            tasks = [client.tasks.get_task(gid, {
-                'opt_fields': OPT_FIELDS
-            }) for gid in args.task_gid]
-        else:
-            tasks = client.tasks.get_tasks({
-                'project': args.project_gid,
-                'completed_since': datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
-                'opt_fields': OPT_FIELDS
-            })
+        tasks = client.tasks.get_tasks({
+            'project': args.project_gid,
+            'completed_since': datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
+            'opt_fields': OPT_FIELDS
+        })
     except asana.error.AsanaError as e:
-        print(f"Asana error getting tasks: {e}")
+        print(f"Asana error getting project tasks: {e}")
         return
     except Exception as e:
-        print(f"Unknown error getting tasks: {e}")
+        print(f"Unknown error getting project tasks: {e}")
         return
 
+    _assign_urgency(args, client, tasks)
+
+
+def task(args, client):
+    """Update urgency of specific tasks."""
+    try:
+        tasks = [client.tasks.get_task(gid, {
+            'opt_fields': OPT_FIELDS
+        }) for gid in args.task_gids]
+    except asana.error.AsanaError as e:
+        print(f"Asana error getting specific tasks: {e}")
+        return
+    except Exception as e:
+        print(f"Unknown error getting specific tasks: {e}")
+        return
+
+    _assign_urgency(args, client, tasks)
+
+
+def _assign_urgency(args, client, tasks):
+    """Assign urgency to tasks based on custom fields."""
     # Update urgency for each task
     for task in tasks:
 
@@ -280,20 +305,47 @@ def parse_args(argv=None):
         default=os.environ.get('ORDER_FIELD_GID', '1206071193914820'),
         help='gid of custom field holding order')
 
-    parser.add_argument(
-        '--fix-section-ordering',
+    # Commands
+    subparsers = parser.add_subparsers(
+        title='commands',
+        description='valid commands',
+        help='additional help',
+        dest='command'
+    )
+
+    # # Order
+    parser_order = subparsers.add_parser(
+        'order',
+        help='Order tasks in a section'
+    )
+    parser_order.add_argument(
+        '--section-gid',
         default=os.environ.get('FIX_SECTION_ORDERING', '1206005792093857'),
         help='re-order tasks in section of project')
+    parser_order.set_defaults(func=order)
 
-    parser.add_argument(
-        '--task-gid',
-        action='append',
-        type=str,
-        help='gid for specific task to update')
-
-    parser.add_argument(
-        'project_gid',
+    # # Urgency
+    parser_urgency = subparsers.add_parser(
+        'urgency',
+        help='Update urgency of tasks'
+    )
+    parser_urgency.add_argument(
+        '--project-gid',
+        default=os.environ.get('PROJECT_GID', '1205994859505918'),
         help='gid for project to update')
+    parser_urgency.set_defaults(func=urgency)
+
+    # # Task
+    parser_task = subparsers.add_parser(
+        'task',
+        help='Update urgency of specific tasks'
+    )
+    parser_task.add_argument(
+        'task_gids',
+        nargs='+',
+        type=str,
+        help='gid for specific tasks to update')
+    parser_task.set_defaults(func=task)
 
     return parser.parse_args(argv)
 

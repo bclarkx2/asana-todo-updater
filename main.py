@@ -7,6 +7,8 @@ import numpy
 import os
 import sys
 
+from asana.rest import ApiException
+
 OPT_FIELDS = 'name,completed,due_on,start_on,custom_fields'
 
 
@@ -14,24 +16,26 @@ def main():
     """Update Asana tasks with urgency based on custom fields."""
     args = parse_args(sys.argv[1:])
 
-    client = asana.Client.access_token(args.personal_access_token)
-    client.options['client_name'] = 'asana-todo-updater'
-    client.headers['Asana-Disable'] = 'new_goal_memberships,new_user_task_lists'
+    config = asana.Configuration()
+    config.access_token = args.personal_access_token
+    client = asana.ApiClient(config)
+    client.set_default_header('Asana-Disable', 'new_goal_memberships,new_user_task_lists')
 
     args.func(args, client)
 
 
 def order(args, client):
     """Order tasks in a section of a project."""
+    tasksApi = asana.TasksApi(client)
     # If we have a section to fix ordering on, do that first
     if args.section_gid is not None:
         # First, fetch all tasks from the section
         try:
-            tasks = client.tasks.get_tasks_for_section(
+            tasks = tasksApi.get_tasks_for_section(
                 args.section_gid,
                 {'opt_fields': OPT_FIELDS}
             )
-        except asana.error.AsanaError as e:
+        except ApiException as e:
             print(f"Asana error getting sections: {e}")
             return
         except Exception as e:
@@ -61,14 +65,20 @@ def order(args, client):
             try:
                 if task['order'] is not None:
                     print(f"Setting order: {order} => {task['name']}")
-                    client.tasks.update_task(task['gid'], {
-                        'custom_fields': {
-                            args.order_field_gid: order
-                        }
-                    })
+                    tasksApi.update_task(
+                        {
+                            'data': {
+                                'custom_fields': {
+                                    args.order_field_gid: order
+                                },
+                            },
+                        },
+                        task['gid'],
+                        {},
+                    )
                 else:
                     print(f"Not ordering: {task['name']}")
-            except asana.error.AsanaError as e:
+            except ApiException as e:
                 print(f"{task['name']} => Asana error ordering task: {e}")
                 return
             except Exception as e:
@@ -81,12 +91,13 @@ def urgency(args, client):
     """Update urgency of tasks in a project."""
     # Retrieve all incomplete tasks in the specific project
     try:
-        tasks = client.tasks.get_tasks({
+        tasksApi = asana.TasksApi(client)
+        tasks = tasksApi.get_tasks({
             'project': args.project_gid,
             'completed_since': datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
             'opt_fields': OPT_FIELDS
         })
-    except asana.error.AsanaError as e:
+    except ApiException as e:
         print(f"Asana error getting project tasks: {e}")
         return
     except Exception as e:
@@ -99,10 +110,11 @@ def urgency(args, client):
 def task(args, client):
     """Update urgency of specific tasks."""
     try:
-        tasks = [client.tasks.get_task(gid, {
+        tasksApi = asana.TasksApi(client)
+        tasks = [tasksApi.get_task(gid, {
             'opt_fields': OPT_FIELDS
         }) for gid in args.task_gids]
-    except asana.error.AsanaError as e:
+    except ApiException as e:
         print(f"Asana error getting specific tasks: {e}")
         return
     except Exception as e:
@@ -142,12 +154,19 @@ def _assign_urgency(args, client, tasks):
 
         # Update only the urgency field on the source task
         try:
-            client.tasks.update_task(task['gid'], {
-                'custom_fields': {
-                    args.urgency_field_gid: urgency
-                }
-            })
-        except asana.error.AsanaError as e:
+            tasksApi = asana.TasksApi(client)
+            tasksApi.update_task(
+                {
+                    'data': {
+                        'custom_fields': {
+                            args.urgency_field_gid: urgency
+                        },
+                    },
+                },
+                task['gid'],
+                {},
+            )
+        except ApiException as e:
             print(f"{name} => Asana error updating task: {e}")
         except Exception as e:
             print(f"{name} => Unknown error updating task: {e}")
